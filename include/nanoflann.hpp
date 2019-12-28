@@ -601,6 +601,15 @@ const size_t BLOCKSIZE = 8192;
 
 template<typename T>
 class PooledAllocator {
+public:
+  using value_type = T;
+  using pointer = value_type*;
+  using const_pointer = const value_type*;
+  using reference = value_type&;
+  using const_reference = const value_type&;
+  using size_type = size_t;
+  using difference_type = std::ptrdiff_t;
+
   /* We maintain memory alignment to word boundaries by requiring that all
       allocations be in multiples of the machine wordsize.  */
   /* Size of machine word in bytes.  Must be power of 2. */
@@ -618,9 +627,60 @@ class PooledAllocator {
     wastedMemory = 0;
   }
 
+  /**
+   * Returns a pointer to a piece of new memory of the given size in bytes
+   * allocated from the pool.
+   */
+  void *malloc(size_type req_size) {
+    /* Round size up to a multiple of wordsize.  The following expression
+        only works for WORDSIZE that is a power of 2, by masking last bits of
+        incremented size to zero.
+     */
+    const size_type size = (req_size + (WORDSIZE - 1)) & ~(WORDSIZE - 1);
+
+    /* Check whether a new block must be allocated.  Note that the first word
+        of a block is reserved for a pointer to the previous block.
+     */
+    if (size > remaining) {
+
+      wastedMemory += remaining;
+
+      /* Allocate new storage. */
+      const size_type blocksize =
+          (size + sizeof(void *) + (WORDSIZE - 1) > BLOCKSIZE)
+              ? size + sizeof(void *) + (WORDSIZE - 1)
+              : BLOCKSIZE;
+
+      // use the standard C malloc to allocate memory
+      void *m = ::malloc(blocksize);
+      if (!m) {
+        fprintf(stderr, "Failed to allocate memory.\n");
+        return NULL;
+      }
+
+      /* Fill first word of new block with pointer to previous block. */
+      static_cast<void **>(m)[0] = base;
+      base = m;
+
+      size_type shift = 0;
+      // int size_t = (WORDSIZE - ( (((size_t)m) + sizeof(void*)) &
+      // (WORDSIZE-1))) & (WORDSIZE-1);
+
+      remaining = blocksize - sizeof(void *) - shift;
+      loc = (static_cast<char *>(m) + sizeof(void *) + shift);
+    }
+    void *rloc = loc;
+    loc = static_cast<char *>(loc) + size;
+    remaining -= size;
+
+    usedMemory += size;
+
+    return rloc;
+  }
+
 public:
-  size_t usedMemory;
-  size_t wastedMemory;
+  size_type usedMemory;
+  size_type wastedMemory;
 
   /**
       Default constructor. Initializes a new pool.
@@ -644,66 +704,20 @@ public:
   }
 
   /**
-   * Returns a pointer to a piece of new memory of the given size in bytes
-   * allocated from the pool.
-   */
-  void *malloc(const size_t req_size) {
-    /* Round size up to a multiple of wordsize.  The following expression
-        only works for WORDSIZE that is a power of 2, by masking last bits of
-        incremented size to zero.
-     */
-    const size_t size = (req_size + (WORDSIZE - 1)) & ~(WORDSIZE - 1);
-
-    /* Check whether a new block must be allocated.  Note that the first word
-        of a block is reserved for a pointer to the previous block.
-     */
-    if (size > remaining) {
-
-      wastedMemory += remaining;
-
-      /* Allocate new storage. */
-      const size_t blocksize =
-          (size + sizeof(void *) + (WORDSIZE - 1) > BLOCKSIZE)
-              ? size + sizeof(void *) + (WORDSIZE - 1)
-              : BLOCKSIZE;
-
-      // use the standard C malloc to allocate memory
-      void *m = ::malloc(blocksize);
-      if (!m) {
-        fprintf(stderr, "Failed to allocate memory.\n");
-        return NULL;
-      }
-
-      /* Fill first word of new block with pointer to previous block. */
-      static_cast<void **>(m)[0] = base;
-      base = m;
-
-      size_t shift = 0;
-      // int size_t = (WORDSIZE - ( (((size_t)m) + sizeof(void*)) &
-      // (WORDSIZE-1))) & (WORDSIZE-1);
-
-      remaining = blocksize - sizeof(void *) - shift;
-      loc = (static_cast<char *>(m) + sizeof(void *) + shift);
-    }
-    void *rloc = loc;
-    loc = static_cast<char *>(loc) + size;
-    remaining -= size;
-
-    usedMemory += size;
-
-    return rloc;
-  }
-
-  /**
    * Allocates (using this pool) a generic type T.
    *
    * Params:
    *     count = number of instances to allocate.
    * Returns: pointer (of type T*) to memory buffer
    */
-  T *allocate(const size_t count = 1) {
-    T *mem = static_cast<T *>(this->malloc(sizeof(T) * count));
+  pointer allocate(size_type count, const_pointer = 0) {
+    pointer mem = static_cast<pointer>(this->malloc(sizeof(T) * count));
     return mem;
+  }
+
+  void deallocate(pointer, size_type) {
+    // Deallocation not implemented, included so that this allocator adhears to
+    // the std::allocator interface
   }
 };
 /** @} */
@@ -858,7 +872,7 @@ public:
    */
   NodePtr divideTree(Derived &obj, const IndexType left, const IndexType right,
                      BoundingBox &bbox) {
-    NodePtr node = obj.pool.allocate(); // allocate memory
+    NodePtr node = obj.pool.allocate(1); // allocate memory
 
     /* If too few exemplars remain, then make this a leaf node. */
     if ((right - left) <= static_cast<IndexType>(obj.m_leaf_max_size)) {
@@ -1034,7 +1048,7 @@ public:
   }
 
   void load_tree(Derived &obj, FILE *stream, NodePtr &tree) {
-    tree = obj.pool.allocate();
+    tree = obj.pool.allocate(1);
     load_value(stream, *tree);
     if (tree->child1 != NULL) {
       load_tree(obj, stream, tree->child1);
