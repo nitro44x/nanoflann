@@ -48,12 +48,6 @@ int main(int argc, char **argv)
 	return RUN_ALL_TESTS();
 }
 
-template <typename T>
-class near_standard_allocator : public std::allocator<T> {
-public:
-  void free_all() {}
-};
-
 template <typename num_t>
 void L2_vs_L2_simple_test(const size_t N, const size_t num_results)
 {
@@ -126,7 +120,7 @@ void L2_PooledAlloc_vs_std_test(const size_t N, const size_t num_results)
 		PointCloud<num_t>,
 		3,
 		size_t,
-		near_standard_allocator<nanoflann::details::Node<size_t, typename L2_Simple_Adaptor<num_t, PointCloud<num_t>>::DistanceType>>
+		near_standard_allocator<size_t, typename L2_Simple_Adaptor<num_t, PointCloud<num_t>>::DistanceType>
 		> my_kd_tree_std_t;
 
 	my_kd_tree_pool_t index1(3, cloud, KDTreeSingleIndexAdaptorParams(10));

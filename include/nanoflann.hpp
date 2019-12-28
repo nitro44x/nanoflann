@@ -57,6 +57,7 @@
 #include <limits> // std::reference_wrapper
 #include <stdexcept>
 #include <vector>
+#include <unordered_map>
 
 /** Library version: 0xMmP (M=Major,m=minor,P=patch) */
 #define NANOFLANN_VERSION 0x132
@@ -599,6 +600,56 @@ template <typename T> inline T *allocate(size_t count = 1) {
   return mem;
 }
 
+//#define NANOFLANN_TRACK_MEMORY
+
+template <typename I, typename D>
+class near_standard_allocator final : private std::allocator<details::Node<I,D>> {
+  using T = details::Node<I,D>;
+
+#ifndef NANOFLANN_TRACK_MEMORY
+  using std::allocator<T>::deallocate;
+#else
+  std::unordered_map<void*, std::size_t> trackedMemory{};
+  void deallocate(T* p, std::size_t n) {
+    std::cout<< "DEALLOC: address=" << p << " size=" << n << std::endl;
+    trackedMemory.erase(p);
+    std::allocator<T>::deallocate(p, n);
+  }
+#endif
+
+public:
+#ifndef NANOFLANN_TRACK_MEMORY
+  using std::allocator<T>::allocate;
+#else
+  ~near_standard_allocator() {
+    for(auto const& kv : trackedMemory) {
+      std::cout<< "LEAK: address=" << kv.first << " size=" << kv.second << std::endl;
+    }
+    assert(trackedMemory.empty());
+  }
+  
+  T* allocate(size_t n, const void* hint = 0) {
+    auto p = std::allocator<T>::allocate(n, hint);
+    std::cout<< "ALLOC: address=" << p << " size=" << n << std::endl;
+    trackedMemory[p] = n;
+    return p;
+  }
+#endif
+
+  void free_all(T* p) { 
+#ifdef NANOFLANN_TRACK_MEMORY
+    std::cout << "free_all std: address=" << p << std::endl;
+#endif
+    if(!p)
+      return;
+    if(p->child1)
+      free_all(p->child1);
+    if(p->child2)
+      free_all(p->child2);
+    deallocate(p, sizeof(T));
+  }
+};
+
 /**
  * Pooled storage allocator
  *
@@ -712,7 +763,7 @@ public:
   ~PooledAllocator() { free_all(); }
 
   /** Frees all allocated memory chunks */
-  void free_all() {
+  void free_all(void* = nullptr) {
     while (base != NULL) {
       void *prev =
           *(static_cast<void **>(base)); /* Get pointer to prev block. */
@@ -773,12 +824,20 @@ template <class Derived, typename Distance, class DatasetAdaptor, int DIM = -1,
           typename IndexType = size_t,
 	  typename Alloc = PooledAllocator<details::Node<IndexType, typename Distance::DistanceType>>>
 class KDTreeBaseClass {
+  void cleanup() {
+    pool.free_all(root_node);
+    root_node = NULL;
+  }
 
 public:
+  ~KDTreeBaseClass() {
+    cleanup();
+  }
+
   /** Frees the previously-built index. Automatically called within
    * buildIndex(). */
   void freeIndex(Derived &obj) {
-    obj.pool.free_all();
+    obj.pool.free_all(obj.root_node);
     obj.root_node = NULL;
     obj.m_size_at_index_build = 0;
   }
@@ -1205,6 +1264,10 @@ public:
     init_vind();
   }
 
+  ~KDTreeSingleIndexAdaptor() { 
+    BaseClassRef::freeIndex(*this);
+  }
+
   /**
    * Builds the index
    */
@@ -1550,6 +1613,10 @@ public:
     if (DIM > 0)
       BaseClassRef::dim = DIM;
     BaseClassRef::m_leaf_max_size = params.leaf_max_size;
+  }
+
+  ~KDTreeSingleIndexDynamicAdaptor_() { 
+    BaseClassRef::freeIndex(*this);
   }
 
   /** Assignment operator definiton */
