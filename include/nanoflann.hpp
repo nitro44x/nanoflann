@@ -599,6 +599,7 @@ template <typename T> inline T *allocate(size_t count = 1) {
 const size_t WORDSIZE = 16;
 const size_t BLOCKSIZE = 8192;
 
+template<typename T>
 class PooledAllocator {
   /* We maintain memory alignment to word boundaries by requiring that all
       allocations be in multiples of the machine wordsize.  */
@@ -700,7 +701,7 @@ public:
    *     count = number of instances to allocate.
    * Returns: pointer (of type T*) to memory buffer
    */
-  template <typename T> T *allocate(const size_t count = 1) {
+  T *allocate(const size_t count = 1) {
     T *mem = static_cast<T *>(this->malloc(sizeof(T) * count));
     return mem;
   }
@@ -808,7 +809,7 @@ public:
    * than allocating memory directly when there is a large
    * number small of memory allocations.
    */
-  PooledAllocator pool;
+  PooledAllocator<Node> pool;
 
   /** Returns number of points in dataset  */
   size_t size(const Derived &obj) const { return obj.m_size; }
@@ -857,7 +858,7 @@ public:
    */
   NodePtr divideTree(Derived &obj, const IndexType left, const IndexType right,
                      BoundingBox &bbox) {
-    NodePtr node = obj.pool.template allocate<Node>(); // allocate memory
+    NodePtr node = obj.pool.allocate(); // allocate memory
 
     /* If too few exemplars remain, then make this a leaf node. */
     if ((right - left) <= static_cast<IndexType>(obj.m_leaf_max_size)) {
@@ -1033,7 +1034,7 @@ public:
   }
 
   void load_tree(Derived &obj, FILE *stream, NodePtr &tree) {
-    tree = obj.pool.template allocate<Node>();
+    tree = obj.pool.allocate();
     load_value(stream, *tree);
     if (tree->child1 != NULL) {
       load_tree(obj, stream, tree->child1);
