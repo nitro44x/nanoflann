@@ -36,6 +36,7 @@
 #include "../examples/utils.h"
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 
 using namespace std;
 using namespace nanoflann;
@@ -46,6 +47,12 @@ int main(int argc, char **argv)
 
 	return RUN_ALL_TESTS();
 }
+
+template <typename T>
+class near_standard_allocator : public std::allocator<T> {
+public:
+  void free_all() {}
+};
 
 template <typename num_t>
 void L2_vs_L2_simple_test(const size_t N, const size_t num_results)
@@ -96,6 +103,59 @@ void L2_vs_L2_simple_test(const size_t N, const size_t num_results)
 		EXPECT_DOUBLE_EQ(out_dist_sqr1[i],out_dist_sqr[i]);
 	}
 }
+
+template <typename num_t>
+void L2_PooledAlloc_vs_std_test(const size_t N, const size_t num_results)
+{
+	PointCloud<num_t> cloud;
+
+	// Generate points:
+	generateRandomPointCloud(cloud, N);
+
+	num_t query_pt[3] = { 0.5, 0.5, 0.5};
+
+	// construct a kd-tree index:
+	typedef KDTreeSingleIndexAdaptor<
+		L2_Simple_Adaptor<num_t, PointCloud<num_t> > ,
+		PointCloud<num_t>,
+		3
+		> my_kd_tree_pool_t;
+
+	typedef KDTreeSingleIndexAdaptor<
+		L2_Simple_Adaptor<num_t, PointCloud<num_t> > ,
+		PointCloud<num_t>,
+		3,
+		size_t,
+		near_standard_allocator<nanoflann::details::Node<size_t, typename L2_Simple_Adaptor<num_t, PointCloud<num_t>>::DistanceType>>
+		> my_kd_tree_std_t;
+
+	my_kd_tree_pool_t index1(3, cloud, KDTreeSingleIndexAdaptorParams(10));
+	index1.buildIndex();
+
+	my_kd_tree_std_t   index2(3, cloud, KDTreeSingleIndexAdaptorParams(10));
+	index2.buildIndex();
+
+	// do a knn search
+	std::vector<size_t>   ret_index(num_results);
+	std::vector<num_t> out_dist_sqr(num_results);
+	nanoflann::KNNResultSet<num_t> resultSet(num_results);
+	resultSet.init(&ret_index[0], &out_dist_sqr[0] );
+	index1.findNeighbors(resultSet, &query_pt[0], nanoflann::SearchParams(10));
+
+	std::vector<size_t>   ret_index1 = ret_index;
+	std::vector<num_t> out_dist_sqr1 = out_dist_sqr;
+
+	resultSet.init(&ret_index[0], &out_dist_sqr[0] );
+
+	index2.findNeighbors(resultSet, &query_pt[0], nanoflann::SearchParams(10));
+
+	for (size_t i=0;i<num_results;i++)
+	{
+		EXPECT_EQ(ret_index1[i],ret_index[i]);
+		EXPECT_DOUBLE_EQ(out_dist_sqr1[i],out_dist_sqr[i]);
+	}
+}
+
 
 using namespace nanoflann;
 #include "../examples/KDTreeVectorOfVectorsAdaptor.h"
@@ -387,6 +447,15 @@ TEST(kdtree,L2_vs_L2_simple)
 	{
 		L2_vs_L2_simple_test<float>(100, nResults);
 		L2_vs_L2_simple_test<double>(100, nResults);
+	}
+}
+
+TEST(kdtree,L2_PooledAlloc_vs_std)
+{
+	for (int nResults=1;nResults<10;nResults++)
+	{
+		L2_PooledAlloc_vs_std_test<float>(100, nResults);
+		L2_PooledAlloc_vs_std_test<double>(100, nResults);
 	}
 }
 

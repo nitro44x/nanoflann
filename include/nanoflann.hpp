@@ -75,6 +75,24 @@ namespace nanoflann {
 /** @addtogroup nanoflann_grp nanoflann C++ library for ANN
  *  @{ */
 
+namespace details {
+  template<typename IndexType, typename DistanceType>
+  struct Node {
+    /** Union used because a node can be either a LEAF node or a non-leaf node,
+     * so both data fields are never used simultaneously */
+    union {
+      struct leaf {
+        IndexType left, right; //!< Indices of points in leaf node
+      } lr;
+      struct nonleaf {
+        int divfeat;                  //!< Dimension used for subdivision.
+        DistanceType divlow, divhigh; //!< The values used for subdivision.
+      } sub;
+    } node_type;
+    Node<IndexType, DistanceType> *child1, *child2; //!< Child nodes (both=NULL mean its a leaf node)
+  };
+}
+
 /** the PI constant (required to avoid MSVC missing symbols) */
 template <typename T> T pi_const() {
   return static_cast<T>(3.14159265358979323846);
@@ -610,6 +628,7 @@ public:
   using size_type = size_t;
   using difference_type = std::ptrdiff_t;
 
+private:
   /* We maintain memory alignment to word boundaries by requiring that all
       allocations be in multiples of the machine wordsize.  */
   /* Size of machine word in bytes.  Must be power of 2. */
@@ -751,7 +770,8 @@ template <typename T> struct array_or_vector_selector<-1, T> {
  */
 
 template <class Derived, typename Distance, class DatasetAdaptor, int DIM = -1,
-          typename IndexType = size_t>
+          typename IndexType = size_t,
+	  typename Alloc = PooledAllocator<details::Node<IndexType, typename Distance::DistanceType>>>
 class KDTreeBaseClass {
 
 public:
@@ -765,23 +785,7 @@ public:
 
   typedef typename Distance::ElementType ElementType;
   typedef typename Distance::DistanceType DistanceType;
-
-  /*--------------------- Internal Data Structures --------------------------*/
-  struct Node {
-    /** Union used because a node can be either a LEAF node or a non-leaf node,
-     * so both data fields are never used simultaneously */
-    union {
-      struct leaf {
-        IndexType left, right; //!< Indices of points in leaf node
-      } lr;
-      struct nonleaf {
-        int divfeat;                  //!< Dimension used for subdivision.
-        DistanceType divlow, divhigh; //!< The values used for subdivision.
-      } sub;
-    } node_type;
-    Node *child1, *child2; //!< Child nodes (both=NULL mean its a leaf node)
-  };
-
+  typedef details::Node<IndexType, DistanceType> Node;
   typedef Node *NodePtr;
 
   struct Interval {
@@ -823,7 +827,7 @@ public:
    * than allocating memory directly when there is a large
    * number small of memory allocations.
    */
-  PooledAllocator<Node> pool;
+  Alloc pool;
 
   /** Returns number of points in dataset  */
   size_t size(const Derived &obj) const { return obj.m_size; }
@@ -1128,11 +1132,12 @@ public:
  * be typically size_t or int
  */
 template <typename Distance, class DatasetAdaptor, int DIM = -1,
-          typename IndexType = size_t>
+          typename IndexType = size_t,
+	  typename Alloc = PooledAllocator<details::Node<IndexType, typename Distance::DistanceType>>>
 class KDTreeSingleIndexAdaptor
     : public KDTreeBaseClass<
-          KDTreeSingleIndexAdaptor<Distance, DatasetAdaptor, DIM, IndexType>,
-          Distance, DatasetAdaptor, DIM, IndexType> {
+          KDTreeSingleIndexAdaptor<Distance, DatasetAdaptor, DIM, IndexType, Alloc>,
+          Distance, DatasetAdaptor, DIM, IndexType, Alloc> {
 public:
   /** Deleted copy constructor*/
   KDTreeSingleIndexAdaptor(
@@ -1150,8 +1155,8 @@ public:
 
   typedef typename nanoflann::KDTreeBaseClass<
       nanoflann::KDTreeSingleIndexAdaptor<Distance, DatasetAdaptor, DIM,
-                                          IndexType>,
-      Distance, DatasetAdaptor, DIM, IndexType>
+                                          IndexType, Alloc>,
+      Distance, DatasetAdaptor, DIM, IndexType, Alloc>
       BaseClassRef;
 
   typedef typename BaseClassRef::ElementType ElementType;
@@ -1478,11 +1483,12 @@ public:
  * be typically size_t or int
  */
 template <typename Distance, class DatasetAdaptor, int DIM = -1,
-          typename IndexType = size_t>
+          typename IndexType = size_t,
+	  typename Alloc = PooledAllocator<details::Node<IndexType, typename Distance::DistanceType>>>
 class KDTreeSingleIndexDynamicAdaptor_
     : public KDTreeBaseClass<KDTreeSingleIndexDynamicAdaptor_<
-                                 Distance, DatasetAdaptor, DIM, IndexType>,
-                             Distance, DatasetAdaptor, DIM, IndexType> {
+                                 Distance, DatasetAdaptor, DIM, IndexType, Alloc>,
+                             Distance, DatasetAdaptor, DIM, IndexType, Alloc> {
 public:
   /**
    * The dataset used by this index
